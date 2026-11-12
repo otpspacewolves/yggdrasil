@@ -72,6 +72,7 @@ button { font: inherit; color: inherit; }
 }
 .node::after { content: ""; position: absolute; pointer-events: none; border-radius: 50%; opacity: 0; transition: opacity .5s ease; }
 .node.lit::after { opacity: 1; }
+.node:not(.lit)::after { animation: none !important; }
 .node.locked { background: rgba(4, 6, 16, .55); border-color: rgba(220, 240, 255, .26); border-width: 1px; color: rgba(230, 245, 255, .36); transform: scale(.82); }
 .node.open { box-shadow: 0 0 6px var(--rc); animation: breathe 2.8s ease-in-out infinite; }
 .node.lit { background: color-mix(in srgb, var(--c) 62%, #05060f); border-color: color-mix(in srgb, var(--rc) 50%, #fff); color: #fff; text-shadow: 0 0 6px #fff; box-shadow: 0 0 8px var(--c), 0 0 22px var(--c); }
@@ -897,9 +898,7 @@ function makeScene(key, size, path) {
   el.style.width = size + 'px'; el.style.height = size + 'px';
   el.hidden = true;
   const base = document.createElement('canvas'), mid = document.createElement('canvas'), links = document.createElement('canvas');
-  base.width = size * RES; base.height = size * RES;
-  mid.width = size * MRES; mid.height = size * MRES;
-  links.width = size * RES; links.height = size * RES;
+  base.width = base.height = mid.width = mid.height = links.width = links.height = 0;
   for (const c of [base, mid, links]) { c.style.width = size + 'px'; c.style.height = size + 'px'; el.appendChild(c); }
   viewport.insertBefore(el, ambFront);
   return { key, size, c: size / 2, el, base, mid, mg: mid.getContext('2d'), links, lg: links.getContext('2d'), nodes: path ? path.nodes : [], rendered: false, path };
@@ -908,6 +907,9 @@ const scenes = { tree: makeScene('tree', SIZE, null) };
 for (const p of paths) if (!p.sleeping && LAYOUTS[p.realm]) scenes[p.realm] = makeScene(p.realm, RSIZE, p);
 let active = scenes.tree;
 scenes.tree.el.hidden = false;
+function allocScene(s) { const z = s.size; if (s.base.width) return; s.base.width = s.base.height = z * RES; s.mid.width = s.mid.height = z * MRES; s.links.width = s.links.height = z * RES; s.midClean = false; }
+function freeScene(s) { if (s === scenes.tree) return; for (const c of [s.base, s.mid, s.links]) c.width = c.height = 0; s.rendered = false; }
+allocScene(scenes.tree);
 function sceneG(scene, res = RES) { const g = scene.base.getContext('2d'); g.setTransform(res, 0, 0, res, scene.c * res, scene.c * res); return g; }
 
 /* ---------- hub art ---------- */
@@ -1791,6 +1793,7 @@ function setBrand(scene) {
   document.body.style.setProperty('--accent', p ? p.color : '#8ff3ff');
 }
 async function showScene(scene) {
+  const prev = active;
   active.el.hidden = true;
   active.el.classList.remove('igniting');
   active = scene;
@@ -1798,6 +1801,8 @@ async function showScene(scene) {
   setBrand(scene);
   setAmbient(scene.key);
   resetAmb();
+  if (prev !== scene) freeScene(prev);
+  allocScene(scene);
   if (!scene.rendered) { scene.rendered = true; await (scene === scenes.tree ? renderTree() : RENDER[scene.key]()); }
   if (scene !== scenes.tree) drawLinks(scene);
   fitScene(scene, false);
@@ -1833,7 +1838,7 @@ const seg = (u, a, b) => Math.max(0, Math.min(1, (u - a) / (b - a)));
 const ease = u => u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
 const easeIn = u => u * u * u;
 const easeOut = u => 1 - Math.pow(1 - u, 3);
-function sizeTrans() { const d = Math.min(2, devicePixelRatio || 1); trCanvas.width = innerWidth * d; trCanvas.height = innerHeight * d; tg.setTransform(d, 0, 0, d, 0, 0); }
+function sizeTrans() { const d = Math.min(1.5, devicePixelRatio || 1); trCanvas.width = innerWidth * d; trCanvas.height = innerHeight * d; tg.setTransform(d, 0, 0, d, 0, 0); }
 function playTransition(kind, onCover, onDone) {
   const T = TRANS[kind] || TRANS.tree;
   if (reduceMotion) { Promise.resolve(onCover && onCover()).then(() => onDone && onDone()); return; }
@@ -2024,7 +2029,7 @@ const TRANS = {
 /* ---------- ambient ---------- */
 const ambB = $('#amb-back'), abg = ambB.getContext('2d'), afg = ambFront.getContext('2d');
 let A = null, dprA = 1;
-function sizeAmb() { dprA = Math.min(2, devicePixelRatio || 1); for (const c of [ambB, ambFront]) { c.width = innerWidth * dprA; c.height = innerHeight * dprA; } }
+function sizeAmb() { dprA = Math.min(1.5, devicePixelRatio || 1); for (const c of [ambB, ambFront]) { c.width = innerWidth * dprA; c.height = innerHeight * dprA; } }
 function resetAmb() {
   const p = active.path;
   A = { parts: [], bolts: [], fxs: [], queue: [], acc: {}, next: {}, t: 0, flash: 0, flashColor: '#ffffff', roar: 0, roarS: 0, flare: 0, boost: 0, wave: null, black: 0, blackS: 0, freeze: 0, waking: 0, preview: 0, forceSleep: 0, masterPreview: 0, breath: 0, anger: 0, ph: 0, lastF: -1,
@@ -2792,7 +2797,7 @@ function drawAmbient(dt, t) {
   if (A.master > .01) { MASTER[active.key]?.(abg, P, t, A.master); sceneT(abg); drawRuneRing(abg, REALM_R + 48, p.color, t * .05, .8 * A.master); sceneT(abg); }
   runFxs(abg, 'b'); sceneT(abg);
   fx.back?.(abg, P, t, dt);
-  const mg = active.mg; mg.setTransform(1, 0, 0, 1, 0, 0); mg.clearRect(0, 0, active.mid.width, active.mid.height); mg.setTransform(MRES, 0, 0, MRES, active.c * MRES, active.c * MRES); fx.mid?.(mg, P, t);
+  if (fx.mid) { const mg = active.mg; mg.setTransform(1, 0, 0, 1, 0, 0); mg.clearRect(0, 0, active.mid.width, active.mid.height); mg.setTransform(MRES, 0, 0, MRES, active.c * MRES, active.c * MRES); fx.mid(mg, P, t); }
   sceneT(afg); drawParts(afg, 'f'); drawBolts(afg, dt); runFxs(afg, 'f');
   sceneT(afg); fx.front?.(afg, P, t);
   if (A.flash > 0) { screenT(afg); afg.globalCompositeOperation = 'lighter'; afg.fillStyle = rgba(A.flashColor, Math.min(.35, A.flash * .4 * VAR.flash)); afg.fillRect(0, 0, innerWidth, innerHeight); afg.globalCompositeOperation = 'source-over'; }
@@ -2898,7 +2903,7 @@ const cosmos = $('#cosmos'), cg = cosmos.getContext('2d');
 let stars = [], floaters = [], nebula = null, cw = 0, ch = 0, ambient = 'tree';
 function ambPath() { return paths.find(p => p.realm === ambient); }
 function sizeCosmos() {
-  const dpr = Math.min(2, devicePixelRatio || 1);
+  const dpr = Math.min(1, devicePixelRatio || 1);
   cw = innerWidth; ch = innerHeight;
   cosmos.width = cw * dpr; cosmos.height = ch * dpr;
   cg.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -2967,7 +2972,7 @@ function frame(now) {
 const fxCanvas = $('#fx'), fg = fxCanvas.getContext('2d');
 let parts = [], fxRunning = false, fxLast = 0;
 function sizeFx() {
-  const dpr = Math.min(2, devicePixelRatio || 1);
+  const dpr = Math.min(1.5, devicePixelRatio || 1);
   fxCanvas.width = innerWidth * dpr; fxCanvas.height = innerHeight * dpr;
   fg.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
